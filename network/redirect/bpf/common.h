@@ -1,0 +1,19 @@
+#pragma once
+
+#include <linux/bpf.h>
+
+const unsigned int A_HOST_NAMESPACE_INGRESS	= 0x01;
+const unsigned int B_HOST_NAMESPACE_INGRESS	= 0x02;
+const unsigned int B_HOST_NAMESPACE_EGRESS	= 0x04;
+const unsigned int B_PEER_NAMESPACE_INGRESS	= 0x08;
+
+struct trace_info {
+	__u32 traversed_path;
+	__u32 pad;
+	__u64 last_seen;
+} __attribute__((aligned(8)));
+
+struct endpoint_info {
+	__u32 ifindex;
+	__u32 pad;
+};
