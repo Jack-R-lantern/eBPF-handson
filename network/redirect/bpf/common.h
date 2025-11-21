@@ -2,10 +2,9 @@
 
 #include <linux/bpf.h>
 
-const unsigned int A_HOST_NAMESPACE_INGRESS	= 0x01;
-const unsigned int B_HOST_NAMESPACE_INGRESS	= 0x02;
-const unsigned int B_HOST_NAMESPACE_EGRESS	= 0x04;
-const unsigned int B_PEER_NAMESPACE_INGRESS	= 0x08;
+const unsigned int A_HOST_NAMESPACE_INGRESS	= 1U << 0;
+const unsigned int B_HOST_NAMESPACE_EGRESS	= 1U << 1;
+const unsigned int B_PEER_NAMESPACE_INGRESS	= 1U << 2;
 
 struct trace_info {
 	__u32 traversed_path;

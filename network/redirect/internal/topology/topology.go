@@ -25,17 +25,52 @@ const (
 	VethBIPv4CIDR = "10.0.1.2/24"
 )
 
+type Program struct {
+	Name      string
+	Direction string
+}
+
 type Endpoint struct {
 	IfIndex   int
 	Name      string
 	IP        net.IP
 	Namespace string
+	IsRoot    bool
+	Peer      string
+	Programs  []Program
 }
 
 type Topology struct {
-	AHost Endpoint // root ns: veth-a-host
-	BHost Endpoint // root ns: veth-b-host
-	BPeer Endpoint // ns-b: veth-b-peer
+	Endpoints map[string]*Endpoint
+}
+
+func (tp *Topology) ConvertDTO() TopologyDTO {
+	endpoints := make([]EndpointDTO, 0, len(tp.Endpoints))
+
+	for name, ep := range tp.Endpoints {
+		// Programs 변환
+		programs := make([]ProgramDTO, 0, len(ep.Programs))
+		for _, p := range ep.Programs {
+			programs = append(programs, ProgramDTO{
+				Name:      p.Name,
+				Direction: p.Direction, // "ingress" / "egress"로 맞춰두면 그대로
+			})
+		}
+
+		endpoints = append(endpoints, EndpointDTO{
+			Name:      name, // map key를 name으로 노출하거나
+			IfIndex:   ep.IfIndex,
+			IP:        ep.IP.String(), // net.IP -> string
+			Namespace: ep.Namespace,
+			IsRoot:    ep.IsRoot,
+			Peer:      ep.Peer,
+			Programs:  programs,
+		})
+	}
+
+	return TopologyDTO{
+		Endpoints: endpoints,
+	}
 }
 
 type linkConfig struct {
@@ -77,7 +112,7 @@ func Setup() (*Topology, error) {
 		return nil, err
 	}
 
-	topology, err := collectTopology()
+	topology, err := collectTopology(&cfgs)
 	if err != nil {
 		return nil, fmt.Errorf("collect topology: %w", err)
 	}
@@ -222,64 +257,65 @@ func setupNSInterface(cfgs []linkConfig) error {
 	return nil
 }
 
-func collectTopology() (*Topology, error) {
-	topology := &Topology{}
-
-	// 1) root ns
-	if err := WithNetNameSpace(NamespaceRoot, func() error {
-		a, err := netlink.LinkByName(VethAHostName)
-		if err != nil {
-			return fmt.Errorf("%s: get %s: %w", NamespaceRoot, VethAHostName, err)
-		}
-		topology.AHost = Endpoint{
-			IfIndex:   a.Attrs().Index,
-			Name:      VethAHostName,
-			IP:        nil,
-			Namespace: NamespaceRoot,
-		}
-
-		b, err := netlink.LinkByName(VethBHostName)
-		if err != nil {
-			return fmt.Errorf("%s: get %s: %w", NamespaceRoot, VethBHostName, err)
-		}
-		topology.BHost = Endpoint{
-			IfIndex:   b.Attrs().Index,
-			Name:      VethBHostName,
-			IP:        nil,
-			Namespace: NamespaceRoot,
-		}
-
-		return nil
-	}); err != nil {
-		return nil, err
+func collectTopology(cfgs *[]linkConfig) (*Topology, error) {
+	topology := &Topology{
+		Endpoints: make(map[string]*Endpoint),
 	}
 
-	// 2) ns-b
-	if err := WithNetNameSpace(NamespaceB, func() error {
-		link, err := netlink.LinkByName(VethBPeerName)
-		if err != nil {
-			return fmt.Errorf("%s: get %s: %w", NamespaceB, VethBPeerName, err)
+	// veth host
+	for _, cfg := range *cfgs {
+		if err := WithNetNameSpace(NamespaceRoot, func() error {
+			link, err := netlink.LinkByName(cfg.hostName)
+			if err != nil {
+				return fmt.Errorf("%s: get %s: %w", NamespaceRoot, cfg.hostName, err)
+			}
+			topology.Endpoints[cfg.hostName] = &Endpoint{
+				IfIndex:   link.Attrs().Index,
+				Name:      cfg.hostName,
+				IP:        nil,
+				Namespace: NamespaceRoot,
+				IsRoot:    true,
+				Peer:      cfg.peerName,
+				Programs:  make([]Program, 0),
+			}
+			return nil
+		}); err != nil {
+			return nil, err
 		}
-
-		addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
-		if err != nil {
-			return fmt.Errorf("%s: list addrs: %w", NamespaceB, err)
-		}
-
-		var ip net.IP
-		if len(addrs) > 0 {
-			ip = addrs[0].IP
-		}
-
-		topology.BPeer = Endpoint{
-			IfIndex:   link.Attrs().Index,
-			Name:      VethBPeerName,
-			IP:        ip,
-			Namespace: NamespaceB,
-		}
-		return nil
-	}); err != nil {
-		return nil, err
 	}
+
+	// veth peer
+	for _, cfg := range *cfgs {
+		if err := WithNetNameSpace(cfg.namespace, func() error {
+			link, err := netlink.LinkByName(cfg.peerName)
+			if err != nil {
+				return fmt.Errorf("%s: get %s: %w", cfg.namespace, cfg.peerName, err)
+			}
+
+			addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+			if err != nil {
+				return fmt.Errorf("%s: list addrs: %w", cfg.namespace, err)
+			}
+
+			var ip net.IP
+			if len(addrs) > 0 {
+				ip = addrs[0].IP
+			}
+
+			topology.Endpoints[cfg.peerName] = &Endpoint{
+				IfIndex:   link.Attrs().Index,
+				Name:      cfg.peerName,
+				IP:        ip,
+				Namespace: cfg.namespace,
+				IsRoot:    false,
+				Peer:      cfg.hostName,
+				Programs:  make([]Program, 0),
+			}
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	}
+
 	return topology, nil
 }

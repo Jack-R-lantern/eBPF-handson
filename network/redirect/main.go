@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/Jack-R-lantern/eBPF-handson/redirect/internal/api"
 	"github.com/Jack-R-lantern/eBPF-handson/redirect/internal/bpf"
 	"github.com/Jack-R-lantern/eBPF-handson/redirect/internal/logger"
 	"github.com/Jack-R-lantern/eBPF-handson/redirect/internal/topology"
@@ -71,6 +72,12 @@ func main() {
 	}
 
 	router := gin.New()
+
+	// 1) static file serving
+	router.Static("/static", "./ui/static")
+	// 2) template load
+	router.LoadHTMLGlob("ui/templates/*")
+
 	router.Use(gin.Recovery())
 	router.Use(func(ctx *gin.Context) {
 		requestID := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -90,6 +97,24 @@ func main() {
 		ctx.Next()
 		reqLogger.Info("request completed", "status", ctx.Writer.Status(), "duration", time.Since(start))
 	})
+
+	// 3) frontend main page
+	router.GET("/", func(ctx *gin.Context) {
+		ctx.HTML(http.StatusOK, "index.html", gin.H{
+			"title": "API Test Frontend",
+		})
+	})
+
+	ctr := api.NewController(mgr, tp)
+
+	// 4) example api
+	routerGroup := router.Group("/api")
+	{
+		routerGroup.GET("/ping", func(ctx *gin.Context) {
+			ctx.JSON(http.StatusOK, gin.H{"message": "pong"})
+		})
+	}
+	api.SetRouter(routerGroup, ctr)
 
 	srv := &http.Server{
 		Addr:    cfg.HTTPAddr,
@@ -111,7 +136,7 @@ func main() {
 	<-ctx.Done()
 	srvLogger.Info("shutdown signal received")
 
-	ctxShutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctxShutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(ctxShutdown); err != nil {

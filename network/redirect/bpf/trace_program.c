@@ -16,14 +16,7 @@ struct {
 	__uint(max_entries, 4);
 	__type(key, __u32);
 	__type(value, struct trace_info);
-} trace_root SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_ARRAY);
-	__uint(max_entries, 1);
-	__type(key, __u32);
-	__type(value, __u32);
-} redirect_dir SEC(".maps");
+} tr_root SEC(".maps");
 
 // Test Program
 SEC("tc/ingress")
@@ -31,20 +24,19 @@ int redirect_test(struct __sk_buff *skb) {
 	__u32 key = 0;
 	
 	struct endpoint_info *info = bpf_map_lookup_elem(&endpoints, &key);
-	__u32 *dir = bpf_map_lookup_elem(&redirect_dir, &key);
 
-	if (!info || !dir) {
+	if (!info) {
 		return TC_ACT_OK;
 	}
-	skb->mark |= A_HOST_NAMESPACE_INGRESS;
-	__u32 trace_key = skb->mark;
+	skb->cb[0] |= A_HOST_NAMESPACE_INGRESS;
+	__u32 trace_key = skb->cb[0];
 	struct trace_info val = {};
 
-	val.traversed_path = key;
+	val.traversed_path = trace_key;
 	val.last_seen = bpf_ktime_get_ns();
-	bpf_map_update_elem(&trace_root, &key, &val, BPF_ANY);
+	bpf_map_update_elem(&tr_root, &trace_key, &val, BPF_ANY);
 
-	return bpf_redirect(info->ifindex, *dir);
+	return bpf_redirect(info->ifindex, 0);
 }
 
 SEC("tc/ingress")
@@ -55,13 +47,13 @@ int redirect_peer_test(struct __sk_buff *skb) {
 	if (!info) {
 		return TC_ACT_OK;
 	}
-	skb->mark |= A_HOST_NAMESPACE_INGRESS;
-	__u32 trace_key = skb->mark;
+	skb->cb[0] |= A_HOST_NAMESPACE_INGRESS;
+	__u32 trace_key = skb->cb[0];
 	struct trace_info val = {};
 
-	val.traversed_path = key;
+	val.traversed_path = trace_key;
 	val.last_seen = bpf_ktime_get_ns();
-	bpf_map_update_elem(&trace_root, &key, &val, BPF_ANY);
+	bpf_map_update_elem(&tr_root, &trace_key, &val, BPF_ANY);
 
 	return bpf_redirect_peer(info->ifindex, 0);
 }
@@ -72,7 +64,7 @@ struct {
 	__type(key, __u32);
 	__type(value, struct trace_info);
 
-} trace_host_ingress_map SEC(".maps");
+} tr_peer_in_map SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
@@ -80,51 +72,30 @@ struct {
 	__type(key, __u32);
 	__type(value, struct trace_info);
 
-} trace_peer_ingress_map SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 4);
-	__type(key, __u32);
-	__type(value, struct trace_info);
-
-} trace_host_egress_map SEC(".maps");
+} tr_host_out_map SEC(".maps");
 
 SEC("tc/ingress")
-int trace_host_ingress(struct __sk_buff *skb) {
-	skb->mark |= B_HOST_NAMESPACE_INGRESS;
-	__u32 key = skb->mark;
+int tr_peer_in(struct __sk_buff *skb) {
+	skb->cb[0] |= B_PEER_NAMESPACE_INGRESS;
+	__u32 key = skb->cb[0];
 	struct trace_info val = {};
 
 	val.traversed_path = key;
 	val.last_seen = bpf_ktime_get_ns();
-	bpf_map_update_elem(&trace_host_ingress_map, &key, &val, BPF_ANY);
-
-	return TC_ACT_OK;
-}
-
-SEC("tc/ingress")
-int trace_peer_ingress(struct __sk_buff *skb) {
-	skb->mark |= B_PEER_NAMESPACE_INGRESS;
-	__u32 key = skb->mark;
-	struct trace_info val = {};
-
-	val.traversed_path = key;
-	val.last_seen = bpf_ktime_get_ns();
-	bpf_map_update_elem(&trace_peer_ingress_map, &key, &val, BPF_ANY);
+	bpf_map_update_elem(&tr_peer_in_map, &key, &val, BPF_ANY);
 
 	return TC_ACT_OK;
 }
 
 SEC("tc/egress")
-int trace_host_egress(struct __sk_buff *skb) {
-	skb->mark |= B_HOST_NAMESPACE_EGRESS;
-	__u32 key = skb->mark;
+int tr_host_out(struct __sk_buff *skb) {
+	skb->cb[0] |= B_HOST_NAMESPACE_EGRESS;
+	__u32 key = skb->cb[0];
 	struct trace_info val = {};
 
 	val.traversed_path = key;
 	val.last_seen = bpf_ktime_get_ns();
-	bpf_map_update_elem(&trace_host_egress_map, &key, &val, BPF_ANY);
+	bpf_map_update_elem(&tr_host_out_map, &key, &val, BPF_ANY);
 
 	return TC_ACT_OK;
 }

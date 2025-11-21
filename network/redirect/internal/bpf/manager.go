@@ -19,13 +19,11 @@ const (
 	ENDPOINTS_MAP_NAME    = "endpoints"
 	REDIRECT_DIR_MAP_NAME = "redirect_dir"
 
-	TRACE_HOST_INGRESS_PROG_NAME = "trace_host_ingress"
-	TRACE_PEER_INGRESS_PROG_NAME = "trace_peer_ingress"
-	TRACE_HOST_EGRESS_PROG_NAME  = "trace_host_egress"
+	TRACE_PEER_INGRESS_PROG_NAME = "tr_peer_in"
+	TRACE_HOST_EGRESS_PROG_NAME  = "tr_host_out"
 
-	TRACE_HOST_INGRESS_MAP_NAME = "trace_host_ingress_map"
-	TRACE_PEER_INGRESS_MAP_NAME = "trace_peer_ingress_map"
-	TRACE_HOST_EGRESS_MAP_NAME  = "trace_host_egress_map"
+	TRACE_PEER_INGRESS_MAP_NAME = "tr_peer_in_map"
+	TRACE_HOST_EGRESS_MAP_NAME  = "tr_host_out_map"
 
 	QDISC_ID = 0xffff
 )
@@ -40,6 +38,11 @@ type tcFilterRef struct {
 	Namespace string
 	Parent    uint32
 	Name      string
+}
+
+type endpointInfo struct {
+	IfIndex uint32
+	Pad     uint32
 }
 
 type BPFManager struct {
@@ -89,18 +92,15 @@ func (mgr *BPFManager) loadObjectSpec(path string) error {
 
 func (mgr *BPFManager) Setup(tp *topology.Topology) error {
 	// VethB Host Setting
-	if err := mgr.setQdisc(tp.BHost.Name, tp.BHost.Namespace); err != nil {
+	vethBHost := tp.Endpoints[topology.VethBHostName]
+	if err := mgr.collection.Maps[ENDPOINTS_MAP_NAME].Put(uint32(0), endpointInfo{IfIndex: uint32(vethBHost.IfIndex)}); err != nil {
+		return err
+	}
+	if err := mgr.setQdisc(vethBHost.Name, vethBHost.Namespace); err != nil {
 		return err
 	}
 	if err := mgr.setFilter(
-		tp.BHost.Name, tp.BHost.Namespace,
-		netlink.HANDLE_MIN_INGRESS,
-		mgr.collection.Programs[TRACE_HOST_INGRESS_PROG_NAME],
-	); err != nil {
-		return err
-	}
-	if err := mgr.setFilter(
-		tp.BHost.Name, tp.BHost.Namespace,
+		vethBHost,
 		netlink.HANDLE_MIN_EGRESS,
 		mgr.collection.Programs[TRACE_HOST_EGRESS_PROG_NAME],
 	); err != nil {
@@ -108,11 +108,12 @@ func (mgr *BPFManager) Setup(tp *topology.Topology) error {
 	}
 
 	// VethB Peer Setting
-	if err := mgr.setQdisc(tp.BPeer.Name, tp.BPeer.Namespace); err != nil {
+	vethBPeer := tp.Endpoints[topology.VethBPeerName]
+	if err := mgr.setQdisc(vethBPeer.Name, vethBPeer.Namespace); err != nil {
 		return err
 	}
 	if err := mgr.setFilter(
-		tp.BPeer.Name, tp.BPeer.Namespace,
+		vethBPeer,
 		netlink.HANDLE_MIN_INGRESS,
 		mgr.collection.Programs[TRACE_PEER_INGRESS_PROG_NAME]); err != nil {
 		return err
@@ -121,31 +122,26 @@ func (mgr *BPFManager) Setup(tp *topology.Topology) error {
 }
 
 func (mgr *BPFManager) TestSetup(scenario string, tp *topology.Topology) (err error) {
-	err = mgr.deleteQdisc(tp.AHost.Name, tp.AHost.Namespace)
+	vethAHost := tp.Endpoints[topology.VethAHostName]
+	err = mgr.deleteQdisc(vethAHost.Name, vethAHost.Namespace)
 	if err != nil {
 		return err
 	}
-	err = mgr.setQdisc(tp.AHost.Name, tp.AHost.Namespace)
+	err = mgr.setQdisc(vethAHost.Name, vethAHost.Namespace)
 	if err != nil {
 		return err
 	}
-
-	redirect_flag := 0
 
 	switch scenario {
-	case "redirect_egress":
-		err = mgr.setFilter(tp.AHost.Name, tp.AHost.Namespace,
-			netlink.HANDLE_MIN_INGRESS,
-			mgr.collection.Programs[REDIRECT_TEST_PROG_NAME],
-		)
-	case "redirect_ingress":
-		redirect_flag = unix.BPF_F_INGRESS
-		err = mgr.setFilter(tp.AHost.Name, tp.AHost.Namespace,
+	case "redirect":
+		err = mgr.setFilter(
+			vethAHost,
 			netlink.HANDLE_MIN_INGRESS,
 			mgr.collection.Programs[REDIRECT_TEST_PROG_NAME],
 		)
 	case "redirect_peer":
-		err = mgr.setFilter(tp.AHost.Name, tp.AHost.Namespace,
+		err = mgr.setFilter(
+			vethAHost,
 			netlink.HANDLE_MIN_INGRESS,
 			mgr.collection.Programs[REDIRECT_PEER_TEST_PROG_NAME],
 		)
@@ -154,10 +150,6 @@ func (mgr *BPFManager) TestSetup(scenario string, tp *topology.Topology) (err er
 	}
 
 	if err != nil {
-		return err
-	}
-
-	if err := mgr.setRedirectDir(uint32(redirect_flag)); err != nil {
 		return err
 	}
 
@@ -206,19 +198,24 @@ func (mgr *BPFManager) setQdisc(ifName, namespace string) error {
 	return nil
 }
 
-func (mgr *BPFManager) setFilter(ifName, namespace string, parent uint32, prog *ebpf.Program) error {
+func (mgr *BPFManager) setFilter(ep *topology.Endpoint, parent uint32, prog *ebpf.Program) error {
 	logger := mgr.logger.With(
-		"ifName", ifName,
-		"namespace", namespace,
+		"ifName", ep.Name,
+		"namespace", ep.Namespace,
 		"parent", fmt.Sprintf("%#x", parent),
 		"program", prog.String(),
 	)
 	logger.Debug("attaching tc-bpf filter")
 
-	if err := topology.WithNetNameSpace(namespace, func() error {
-		link, err := netlink.LinkByName(ifName)
+	info, err := prog.Info()
+	if err != nil {
+		return fmt.Errorf("get bpf prog info %s: %w", info.Name, err)
+	}
+
+	if err := topology.WithNetNameSpace(ep.Namespace, func() error {
+		link, err := netlink.LinkByName(ep.Name)
 		if err != nil {
-			return fmt.Errorf("get link by name %s: %w", ifName, err)
+			return fmt.Errorf("get link by name %s: %w", ep.Name, err)
 		}
 
 		filter := &netlink.BpfFilter{
@@ -229,7 +226,7 @@ func (mgr *BPFManager) setFilter(ifName, namespace string, parent uint32, prog *
 				Protocol:  unix.ETH_P_ALL,
 			},
 			Fd:           prog.FD(),
-			Name:         prog.String(),
+			Name:         info.Name,
 			DirectAction: true,
 		}
 
@@ -237,37 +234,34 @@ func (mgr *BPFManager) setFilter(ifName, namespace string, parent uint32, prog *
 		if err != nil {
 			return fmt.Errorf("failed to replace tc bpf filter (parent=%#x): %w", parent, err)
 		}
+
+		ep.Programs = append(ep.Programs, topology.Program{Name: info.Name, Direction: directionString(parent)})
+
 		return nil
 	}); err != nil {
 		return err
 	}
 
-	mgr.filters[prog.String()] = tcFilterRef{
-		IfName:    ifName,
-		Namespace: namespace,
+	mgr.filters[info.Name] = tcFilterRef{
+		IfName:    ep.Name,
+		Namespace: ep.Namespace,
 		Parent:    parent,
-		Name:      prog.String(),
+		Name:      info.Name,
 	}
 	logger.Info("tc-bpf filter ready")
 
 	return nil
 }
 
-func (mgr *BPFManager) setRedirectDir(flag uint32) error {
-	mgr.logger.With("direction", flag).Debug("setting redirect direction")
-	dirMap, ok := mgr.collection.Maps[REDIRECT_DIR_MAP_NAME]
-	if !ok {
-		return fmt.Errorf("redirect_dir map not found in collection")
+func directionString(parent uint32) string {
+	switch parent {
+	case netlink.HANDLE_MIN_INGRESS:
+		return "ingress"
+	case netlink.HANDLE_MIN_EGRESS:
+		return "egress"
+	default:
+		return "unknown"
 	}
-
-	key := uint32(0)
-	value := flag
-
-	if err := dirMap.Update(&key, &value, ebpf.UpdateAny); err != nil {
-		return fmt.Errorf("failed to update redirect_dir map: %w", err)
-	}
-	mgr.logger.With("direction", flag).Info("redirect direction updated")
-	return nil
 }
 
 func (mgr *BPFManager) Cleanup() error {
@@ -318,10 +312,12 @@ func (mgr *BPFManager) deleteFilter(ifName, namespace string, parent uint32, nam
 			// parent + name 매칭
 			if bpfFilter.Name == name && bpfFilter.Attrs().Parent == parent {
 				err := netlink.FilterDel(filter)
-				if errors.Is(err, unix.ENOENT) {
-					err = nil
-				} else {
-					return fmt.Errorf("delete filter %s on %s: %w", name, ifName, err)
+				if err != nil {
+					if errors.Is(err, unix.ENOENT) {
+						err = nil
+					} else {
+						return fmt.Errorf("delete filter %s on %s: %w", name, ifName, err)
+					}
 				}
 			}
 		}
@@ -350,10 +346,12 @@ func (mgr *BPFManager) deleteQdisc(ifName, namespace string) error {
 		}
 
 		err = netlink.QdiscDel(clsact)
-		if errors.Is(err, unix.ENOENT) {
-			err = nil
-		} else {
-			return fmt.Errorf("delete clsact qdisc on %s: %w", ifName, err)
+		if err != nil {
+			if errors.Is(err, unix.ENOENT) {
+				err = nil
+			} else {
+				return fmt.Errorf("delete clsact qdisc on %s: %w", ifName, err)
+			}
 		}
 
 		delete(mgr.qdiscs, ifName)
