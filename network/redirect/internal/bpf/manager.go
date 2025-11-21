@@ -13,13 +13,17 @@ import (
 )
 
 const (
-	REDIRECT_TEST_PROG_NAME      = "redirect_test"
-	REDIRECT_PEER_TEST_PROG_NAME = "redirect_peer_test"
+	REDIRECT_TEST_PROG_NAME = "redirect"
 
 	ENDPOINTS_MAP_NAME    = "endpoints"
 	REDIRECT_DIR_MAP_NAME = "redirect_dir"
+	TEST_SELECT_MAP_NAME  = "test_select"
+
+	TEST_SELECT_REDIRECT      uint32 = 0
+	TEST_SELECT_REDIRECT_PEER uint32 = 1
 
 	TRACE_PEER_INGRESS_PROG_NAME = "tr_peer_in"
+	TRACE_HOST_INGRESS_PROG_NAME = "tr_host_in"
 	TRACE_HOST_EGRESS_PROG_NAME  = "tr_host_out"
 
 	TRACE_PEER_INGRESS_MAP_NAME = "tr_peer_in_map"
@@ -91,11 +95,32 @@ func (mgr *BPFManager) loadObjectSpec(path string) error {
 }
 
 func (mgr *BPFManager) Setup(tp *topology.Topology) error {
+	// VethA Host Setting
+	vethAHost := tp.Endpoints[topology.VethAHostName]
+	if err := mgr.collection.Maps[TEST_SELECT_MAP_NAME].Put(uint32(0), TEST_SELECT_REDIRECT); err != nil {
+		return err
+	}
+	if err := mgr.setQdisc(vethAHost.Name, vethAHost.Namespace); err != nil {
+		return err
+	}
+	if err := mgr.setFilter(
+		vethAHost,
+		netlink.HANDLE_MIN_INGRESS,
+		mgr.collection.Programs[REDIRECT_TEST_PROG_NAME],
+	); err != nil {
+		return err
+	}
+	if err := mgr.collection.Maps[ENDPOINTS_MAP_NAME].Put(uint32(1), endpointInfo{IfIndex: uint32(vethAHost.IfIndex)}); err != nil {
+		return err
+	}
+
 	// VethB Host Setting
 	vethBHost := tp.Endpoints[topology.VethBHostName]
+
 	if err := mgr.collection.Maps[ENDPOINTS_MAP_NAME].Put(uint32(0), endpointInfo{IfIndex: uint32(vethBHost.IfIndex)}); err != nil {
 		return err
 	}
+
 	if err := mgr.setQdisc(vethBHost.Name, vethBHost.Namespace); err != nil {
 		return err
 	}
@@ -103,6 +128,13 @@ func (mgr *BPFManager) Setup(tp *topology.Topology) error {
 		vethBHost,
 		netlink.HANDLE_MIN_EGRESS,
 		mgr.collection.Programs[TRACE_HOST_EGRESS_PROG_NAME],
+	); err != nil {
+		return err
+	}
+	if err := mgr.setFilter(
+		vethBHost,
+		netlink.HANDLE_MIN_INGRESS,
+		mgr.collection.Programs[TRACE_HOST_INGRESS_PROG_NAME],
 	); err != nil {
 		return err
 	}
@@ -122,35 +154,17 @@ func (mgr *BPFManager) Setup(tp *topology.Topology) error {
 }
 
 func (mgr *BPFManager) TestSetup(scenario string, tp *topology.Topology) (err error) {
-	vethAHost := tp.Endpoints[topology.VethAHostName]
-	err = mgr.deleteQdisc(vethAHost.Name, vethAHost.Namespace)
-	if err != nil {
-		return err
-	}
-	err = mgr.setQdisc(vethAHost.Name, vethAHost.Namespace)
-	if err != nil {
-		return err
-	}
-
 	switch scenario {
 	case "redirect":
-		err = mgr.setFilter(
-			vethAHost,
-			netlink.HANDLE_MIN_INGRESS,
-			mgr.collection.Programs[REDIRECT_TEST_PROG_NAME],
-		)
+		if err := mgr.collection.Maps[TEST_SELECT_MAP_NAME].Put(uint32(0), TEST_SELECT_REDIRECT); err != nil {
+			return err
+		}
 	case "redirect_peer":
-		err = mgr.setFilter(
-			vethAHost,
-			netlink.HANDLE_MIN_INGRESS,
-			mgr.collection.Programs[REDIRECT_PEER_TEST_PROG_NAME],
-		)
+		if err := mgr.collection.Maps[TEST_SELECT_MAP_NAME].Put(uint32(0), TEST_SELECT_REDIRECT_PEER); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("scenario not exist")
-	}
-
-	if err != nil {
-		return err
 	}
 
 	return nil

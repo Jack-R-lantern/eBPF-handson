@@ -1,15 +1,23 @@
 #include <linux/bpf.h>
 #include <linux/pkt_cls.h>
+#include <linux/if_packet.h>
 #include <bpf/bpf_helpers.h>
 
 #include "common.h"
 
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
-	__uint(max_entries, 1);
+	__uint(max_entries, 2);
 	__type(key, __u32);
 	__type(value, struct endpoint_info);
 } endpoints SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, __u32);
+	__type(value, __u32);
+} test_select SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
@@ -20,12 +28,13 @@ struct {
 
 // Test Program
 SEC("tc/ingress")
-int redirect_test(struct __sk_buff *skb) {
+int redirect(struct __sk_buff *skb) {
 	__u32 key = 0;
 	
 	struct endpoint_info *info = bpf_map_lookup_elem(&endpoints, &key);
+	__u32 *test = bpf_map_lookup_elem(&test_select, &key);
 
-	if (!info) {
+	if (!info || !test) {
 		return TC_ACT_OK;
 	}
 	skb->cb[0] |= A_HOST_NAMESPACE_INGRESS;
@@ -34,28 +43,18 @@ int redirect_test(struct __sk_buff *skb) {
 
 	val.traversed_path = trace_key;
 	val.last_seen = bpf_ktime_get_ns();
+
 	bpf_map_update_elem(&tr_root, &trace_key, &val, BPF_ANY);
 
-	return bpf_redirect(info->ifindex, 0);
-}
-
-SEC("tc/ingress")
-int redirect_peer_test(struct __sk_buff *skb) {
-	__u32 key = 0;
-
-	struct endpoint_info *info = bpf_map_lookup_elem(&endpoints, &key);
-	if (!info) {
-		return TC_ACT_OK;
+	if (*test == 0) {
+		return bpf_redirect(info->ifindex, 0);
+	} else {
+		int ret = bpf_skb_change_type(skb, PACKET_HOST);
+		if (ret < 0) {
+			return TC_ACT_OK;
+		}
+		return bpf_redirect_peer(info->ifindex, 0);
 	}
-	skb->cb[0] |= A_HOST_NAMESPACE_INGRESS;
-	__u32 trace_key = skb->cb[0];
-	struct trace_info val = {};
-
-	val.traversed_path = trace_key;
-	val.last_seen = bpf_ktime_get_ns();
-	bpf_map_update_elem(&tr_root, &trace_key, &val, BPF_ANY);
-
-	return bpf_redirect_peer(info->ifindex, 0);
 }
 
 struct {
@@ -84,7 +83,20 @@ int tr_peer_in(struct __sk_buff *skb) {
 	val.last_seen = bpf_ktime_get_ns();
 	bpf_map_update_elem(&tr_peer_in_map, &key, &val, BPF_ANY);
 
+
 	return TC_ACT_OK;
+}
+
+SEC("tc/ingress")
+int tr_host_in(struct __sk_buff *skb) {
+	__u32 key = 1;
+
+	struct endpoint_info *info = bpf_map_lookup_elem(&endpoints, &key);
+	if (!info) {
+		return TC_ACT_OK;
+	}
+
+	return bpf_redirect(info->ifindex, 0);
 }
 
 SEC("tc/egress")
