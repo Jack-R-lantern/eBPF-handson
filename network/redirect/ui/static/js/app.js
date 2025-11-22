@@ -319,7 +319,7 @@ function renderPath(result) {
   // 좌측 토폴로지 하이라이트
   clearActiveHops();
   result.path.forEach(step => {
-    const id = ifaceDomId(step.ns, step.if);
+    const id = ifaceDomId(step.namespace, step.interface);
     const el = document.getElementById(id);
     if (el) {
       el.classList.add('active-hop');
@@ -345,7 +345,7 @@ async function runTest() {
 
     const data = await res.json();
     renderPath(data);
-    statusEl.textContent = `Scenario "${data.scenario}" finished: ${data.from.ns}/${data.from.if} -> ${data.to.ns}/${data.to.if}`;
+    statusEl.textContent = `Scenario "${data.scenario}" finished: ${data.from.namespace}/${data.from.interface} -> ${data.to.namespace}/${data.to.interface}`;
   } catch (err) {
     console.error(err);
     statusEl.textContent = 'Error while running test.';

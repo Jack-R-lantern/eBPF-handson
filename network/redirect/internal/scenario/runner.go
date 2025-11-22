@@ -24,7 +24,7 @@ type PathStep struct {
 	Hook      string        `json:"hook"`
 	Program   string        `json:"program"`
 	At        time.Time     `json:"at,omitempty"`
-	SincePrev time.Duration `json:"delta_ns,omitempty"`
+	SincePrev time.Duration `json:"delta_ns"`
 	Note      string        `json:"note,omitempty"`
 }
 
