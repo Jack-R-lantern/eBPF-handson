@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<title>bpf_redirect test UI</title>
+	<link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+	<div class="app-container">
+	<!-- Left: Topology -->
+	<div class="left-panel">
+		<div class="panel-title">Topology</div>
+		<div id="topology-root"></div>
+	</div>
+
+	<!-- Right: Test Control & Result -->
+	<div class="right-panel">
+		<div class="panel-title">bpf_redirect Test</div>
+
+		<div class="controls">
+		<div class="controls-row">
+			<label for="scenario-select">Scenario</label>
+			<select id="scenario-select">
+			<option value="redirect">bpf_redirect egress</option>
+			<option value="redirect_peer">bpf_redirect_peer</option>
+			</select>
+		</div>
+		<div class="controls-row">
+			<button id="run-test-btn">Run Test</button>
+		</div>
+		<div class="test-status" id="test-status">Ready.</div>
+		</div>
+
+		<div class="path-container">
+		<div style="font-weight:600; font-size:0.9rem; margin-bottom:6px;">Path</div>
+		<div id="path-root">
+			<div style="font-size:0.8rem; color:#9ca3af;">Press "Run Test" to see path.</div>
+		</div>
+		</div>
+	</div>
+	</div>
+	
+	<script src="/static/js/app.js"></script>
+</body>
+</html>
