@@ -23,11 +23,11 @@ const (
 	TEST_SELECT_REDIRECT_PEER uint32 = 1
 
 	TRACE_PEER_INGRESS_PROG_NAME = "tr_peer_in"
+	TRACE_PEER_EGRESS_PROG_NAME  = "tr_peer_out"
 	TRACE_HOST_INGRESS_PROG_NAME = "tr_host_in"
 	TRACE_HOST_EGRESS_PROG_NAME  = "tr_host_out"
 
-	TRACE_PEER_INGRESS_MAP_NAME = "tr_peer_in_map"
-	TRACE_HOST_EGRESS_MAP_NAME  = "tr_host_out_map"
+	TRACE_MAP = "trace"
 
 	QDISC_ID = 0xffff
 )
@@ -95,6 +95,19 @@ func (mgr *BPFManager) loadObjectSpec(path string) error {
 }
 
 func (mgr *BPFManager) Setup(tp *topology.Topology) error {
+	// VethA Peer Setting
+	vethAPeer := tp.Endpoints[topology.VethAPeerName]
+	if err := mgr.setQdisc(vethAPeer.Name, vethAPeer.Namespace); err != nil {
+		return err
+	}
+	if err := mgr.setFilter(
+		vethAPeer,
+		netlink.HANDLE_MIN_EGRESS,
+		mgr.collection.Programs[TRACE_PEER_EGRESS_PROG_NAME],
+	); err != nil {
+		return err
+	}
+
 	// VethA Host Setting
 	vethAHost := tp.Endpoints[topology.VethAHostName]
 	if err := mgr.collection.Maps[TEST_SELECT_MAP_NAME].Put(uint32(0), TEST_SELECT_REDIRECT); err != nil {
