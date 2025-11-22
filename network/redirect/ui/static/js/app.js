@@ -287,14 +287,24 @@ function renderPath(result) {
 
     const label = document.createElement('div');
     label.className = 'path-step-label';
-    label.textContent = `#${step.step} ${step.ns}/${step.if}`;
+    label.textContent = `#${step.step} ${step.namespace}/${step.interface}`;
 
     const meta = document.createElement('div');
     meta.className = 'path-step-meta';
-    meta.textContent = `${step.hook} • ${step.prog}`;
+    meta.textContent = `${step.hook} • ${step.program}`;
+
+    const timing = document.createElement('div');
+    timing.className = 'path-step-meta';
+    const deltaMs = typeof step.delta_ns === 'number' ? step.delta_ns / 1e6 : null;
+    if (Number.isFinite(deltaMs)) {
+      timing.textContent = `elapsed +${deltaMs.toFixed(3)} ms since first trace`;
+    } else {
+      timing.textContent = 'time unavailable';
+    }
 
     header.appendChild(label);
     header.appendChild(meta);
+    header.appendChild(timing);
 
     const note = document.createElement('div');
     note.style.fontSize = '0.75rem';

@@ -73,6 +73,8 @@ int tr_peer_out(struct __sk_buff *skb) {
 	val.traversed_path = key;
 	val.last_seen = bpf_ktime_get_ns();
 	bpf_map_update_elem(&trace, &key, &val, BPF_ANY);
+
+	return TC_ACT_OK;
 }
 
 // Veth B Peer Ingress Hook Attach

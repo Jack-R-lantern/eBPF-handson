@@ -30,7 +30,24 @@ const (
 	TRACE_MAP = "trace"
 
 	QDISC_ID = 0xffff
+
+	// bpf key direction
+	A_PEER_NAMESPACE_EGRESS  uint32 = 1 << 0
+	A_HOST_NAMESPACE_INGRESS uint32 = 1 << 1
+	B_HOST_NAMESPACE_EGRESS  uint32 = 1 << 2
+	B_PEER_NAMESPACE_INGRESS uint32 = 1 << 3
 )
+
+type TraceInfo struct {
+	TraversedPath uint32
+	Pad           uint32
+	LastSeen      uint64
+}
+
+type TraceEntry struct {
+	Key   uint32
+	Value TraceInfo
+}
 
 type tcQdiscRef struct {
 	IfName    string
@@ -181,6 +198,47 @@ func (mgr *BPFManager) TestSetup(scenario string, tp *topology.Topology) (err er
 	}
 
 	return nil
+}
+
+func (mgr *BPFManager) ClearTraceMap() error {
+	traceMap, ok := mgr.collection.Maps[TRACE_MAP]
+	if !ok {
+		return fmt.Errorf("trace map not found")
+	}
+
+	iter := traceMap.Iterate()
+	var key uint32
+	var val TraceInfo
+
+	for iter.Next(&key, &val) {
+		if err := traceMap.Delete(&key); err != nil {
+			return fmt.Errorf("clear trace map key %d: %w", key, err)
+		}
+	}
+
+	return iter.Err()
+}
+
+func (mgr *BPFManager) ReadTraceEntires() ([]TraceEntry, error) {
+	traceMap, ok := mgr.collection.Maps[TRACE_MAP]
+	if !ok {
+		return nil, fmt.Errorf("trace map not found")
+	}
+
+	iter := traceMap.Iterate()
+	var key uint32
+	var val TraceInfo
+
+	traces := make([]TraceEntry, 0)
+	for iter.Next(&key, &val) {
+		traces = append(traces, TraceEntry{Key: key, Value: val})
+	}
+
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("read trace map: %w", err)
+	}
+
+	return traces, nil
 }
 
 func (mgr *BPFManager) setQdisc(ifName, namespace string) error {
