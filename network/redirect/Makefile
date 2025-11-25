@@ -9,7 +9,7 @@ BPF_DIR	:= bpf
 all: build bpf
 
 .PHONY: build
-build:
+build: bpf
 	@echo "[Go] Building binary..."
 	$(GO) build $(GOFLAGS) -o $(BIN_NAME) .
 
